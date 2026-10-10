@@ -26,7 +26,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.example.projectandroidstarwars.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -35,9 +34,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.projectandroidstarwars.ui.theme.StarWarsApp
 import com.example.projectandroidstarwars.ui.theme.ProjectAndroidStarWarsTheme
+import com.example.projectandroidstarwars.ui.theme.StarWarsApp
 import com.example.projectandroidstarwars.viewmodel.CharactersViewModel
+import com.example.projectandroidstarwars.viewmodel.charactersViewModelFactory
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -48,13 +48,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            ProjectAndroidStarWarsTheme  {
+            ProjectAndroidStarWarsTheme {
                 var showWelcome by rememberSaveable {
                     mutableStateOf(true)
                 }
-
-                val charactersViewModel: CharactersViewModel =
-                    viewModel()
 
                 if (showWelcome) {
                     LaunchedEffect(Unit) {
@@ -64,6 +61,11 @@ class MainActivity : ComponentActivity() {
 
                     WelcomeScreen()
                 } else {
+                    val charactersViewModel: CharactersViewModel =
+                        viewModel(
+                            factory = charactersViewModelFactory
+                        )
+
                     StarWarsApp(
                         viewModel = charactersViewModel
                     )
@@ -75,13 +77,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun WelcomeScreen() {
-    val backgroundColor = Color(0xFF090D16)
-    val accentColor = Color(0xFFFFD54F)
-
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundColor)
+            .background(Color(0xFF090D16))
             .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
@@ -90,7 +89,7 @@ private fun WelcomeScreen() {
     ) {
         Text(
             text = "STAR WARS",
-            color = accentColor,
+            color = Color(0xFFFFD54F),
             style = MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center
@@ -116,7 +115,7 @@ private fun WelcomeScreen() {
 
         Text(
             text = "Познакомьтесь с героями далёкой-далёкой галактики.",
-            color =Color(0xFFBDC5D5),
+            color = Color(0xFFBDC5D5),
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
         )

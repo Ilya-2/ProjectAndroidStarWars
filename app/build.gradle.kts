@@ -52,12 +52,29 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
+    // Сетевые запросы.
+    implementation("com.squareup.retrofit2:retrofit:3.0.0")
+
+    // Преобразование JSON в Kotlin-объекты.
+    implementation("com.squareup.retrofit2:converter-gson:3.0.0")
+
+    // Корутины для асинхронной работы.
+    implementation(
+        "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
+    )
+
     // Навигация между экранами.
     implementation("androidx.navigation:navigation-compose:2.9.0")
 
-    // ViewModel.
+    // ViewModel для Compose.
     implementation(
         "androidx.lifecycle:lifecycle-viewmodel-compose:" +
+                libs.versions.lifecycleRuntimeKtx.get()
+    )
+
+    // Запуск корутин внутри ViewModel.
+    implementation(
+        "androidx.lifecycle:lifecycle-viewmodel-ktx:" +
                 libs.versions.lifecycleRuntimeKtx.get()
     )
 
@@ -72,7 +89,9 @@ dependencies {
         "androidx.constraintlayout:constraintlayout-compose:1.1.1"
     )
 
+    // Тесты.
     testImplementation(libs.junit)
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
