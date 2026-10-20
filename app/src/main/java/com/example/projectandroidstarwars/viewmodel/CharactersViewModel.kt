@@ -5,38 +5,105 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import com.example.projectandroidstarwars.data.CharacterRepository
-import com.example.projectandroidstarwars.model.StarWarsCharacter
+import androidx.lifecycle.viewModelScope
+import com.example.projectandroidstarwars.domain.model.CharacterPage
+import com.example.projectandroidstarwars.domain.repository.CharacterLoadException
+import com.example.projectandroidstarwars.domain.usecase.GetCharactersUseCase
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 class CharactersViewModel(
-    private val savedStateHandle: SavedStateHandle
+    private val savedStateHandle: SavedStateHandle,
+    private val getCharacters: GetCharactersUseCase
 ) : ViewModel() {
 
-    private val repository = CharacterRepository()
-
     var searchQuery by mutableStateOf(
-        savedStateHandle.get<String>("search_query") ?: ""
+        savedStateHandle.get<String>("draft_query") ?: ""
     )
         private set
 
-    val characters: List<StarWarsCharacter>
-        get() {
-            val query = searchQuery.trim()
+    var state by mutableStateOf<LoadState<CharacterPage>>(
+        LoadState.Loading
+    )
+        private set
 
-            return repository.getCharacters().filter { character ->
-                character.name.contains(
-                    other = query,
-                    ignoreCase = true
-                )
-            }
-        }
+    private var activeQuery =
+        savedStateHandle.get<String>("active_query") ?: ""
+
+    private var requestedPage =
+        savedStateHandle.get<Int>("page") ?: 1
+
+    private var job: Job? = null
+
+    init {
+        load(requestedPage)
+    }
 
     fun updateSearchQuery(value: String) {
         searchQuery = value
-        savedStateHandle["search_query"] = value
+        savedStateHandle["draft_query"] = value
     }
 
-    fun getCharacterById(id: Int): StarWarsCharacter? {
-        return repository.getCharacterById(id)
+    fun search() {
+        activeQuery = searchQuery.trim()
+        savedStateHandle["active_query"] = activeQuery
+        load(1)
+    }
+
+    fun retry() {
+        load(requestedPage)
+    }
+
+    fun nextPage() {
+        val currentState = state
+
+        if (currentState is LoadState.Success) {
+            val page = currentState.data
+
+            if (page.hasNext) {
+                load(page.page + 1)
+            }
+        }
+    }
+
+    fun previousPage() {
+        val currentState = state
+
+        if (currentState is LoadState.Success) {
+            val page = currentState.data
+
+            if (page.page > 1) {
+                load(page.page - 1)
+            }
+        }
+    }
+
+    private fun load(page: Int) {
+        job?.cancel()
+
+        requestedPage = page
+        savedStateHandle["page"] = page
+        state = LoadState.Loading
+
+        val query = activeQuery
+
+        job = viewModelScope.launch {
+            try {
+                state = LoadState.Success(
+                    getCharacters(query, page)
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: CharacterLoadException) {
+                state = LoadState.Error(
+                    e.message ?: "Не удалось загрузить персонажей."
+                )
+            } catch (e: Exception) {
+                state = LoadState.Error(
+                    "Не удалось обработать данные. Повторите попытку."
+                )
+            }
+        }
     }
 }
