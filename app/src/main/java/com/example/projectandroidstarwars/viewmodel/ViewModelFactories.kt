@@ -63,3 +63,16 @@ val favoritesViewModelFactory = viewModelFactory {
         )
     }
 }
+
+val profileViewModelFactory = viewModelFactory {
+    initializer {
+        AppContainer.initialize(
+            checkNotNull(this[APPLICATION_KEY])
+        )
+
+        ProfileViewModel(
+            repository = AppContainer.profileRepository,
+            savedStateHandle = createSavedStateHandle()
+        )
+    }
+}

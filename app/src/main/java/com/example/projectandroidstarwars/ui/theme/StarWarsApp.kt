@@ -46,13 +46,18 @@ private val bottomTabs = listOf(
     BottomTab("people", "Персонажи", "★"),
     BottomTab("planets", "Планеты", "◎"),
     BottomTab("favorites", "Избранное", "♥"),
-    BottomTab("settings", "Настройки", "⚙")
+    BottomTab("settings", "Настройки", "⚙"),
+    BottomTab("profile", "Профиль", "●")
 )
 
 @Composable
 fun StarWarsApp() {
     val appViewModel: StarWarsAppViewModel = composeViewModel(
         factory = starWarsAppViewModelFactory
+    )
+
+    val profileViewModel: ProfileViewModel = composeViewModel(
+        factory = profileViewModelFactory
     )
 
     val badgeVisible by appViewModel.badgeVisible
@@ -86,6 +91,8 @@ fun StarWarsApp() {
         "planets" -> "Планеты"
         "favorites" -> "Избранное"
         "settings" -> "Настройки поиска"
+        "profile" -> "Профиль"
+        "profile_edit" -> "Редактирование профиля"
         else -> "Архив галактики"
     }
 
@@ -99,11 +106,16 @@ fun StarWarsApp() {
                     Text(title)
                 },
                 navigationIcon = {
-                    if (route == "details/{characterId}") {
+                    if (
+                        route == "details/{characterId}" ||
+                        route == "profile_edit"
+                    ) {
                         TextButton(
                             onClick = {
                                 navController.popBackStack()
-                            }
+                            },
+                            enabled = route != "profile_edit" ||
+                                    !profileViewModel.uiState.busy
                         ) {
                             Text("Назад")
                         }
@@ -112,37 +124,39 @@ fun StarWarsApp() {
             )
         },
         bottomBar = {
-            NavigationBar {
-                bottomTabs.forEach { tab ->
-                    val selected = destination
-                        ?.hierarchy
-                        ?.any { it.route == tab.route } == true
+            if (route != "profile_edit") {
+                NavigationBar {
+                    bottomTabs.forEach { tab ->
+                        val selected = destination
+                            ?.hierarchy
+                            ?.any { it.route == tab.route } == true
 
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            if (!selected) {
-                                openTab(tab.route)
-                            }
-                        },
-                        icon = {
-                            BadgedBox(
-                                badge = {
-                                    if (
-                                        tab.route == "settings" &&
-                                        badgeVisible
-                                    ) {
-                                        Badge()
-                                    }
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                if (!selected) {
+                                    openTab(tab.route)
                                 }
-                            ) {
-                                Text(tab.symbol)
+                            },
+                            icon = {
+                                BadgedBox(
+                                    badge = {
+                                        if (
+                                            tab.route == "settings" &&
+                                            badgeVisible
+                                        ) {
+                                            Badge()
+                                        }
+                                    }
+                                ) {
+                                    Text(tab.symbol)
+                                }
+                            },
+                            label = {
+                                Text(tab.title)
                             }
-                        },
-                        label = {
-                            Text(tab.title)
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -199,6 +213,26 @@ fun StarWarsApp() {
                 FiltersRoute(
                     onDone = {
                         openTab("people")
+                    }
+                )
+            }
+
+            composable("profile") {
+                ProfileRoute(
+                    viewModel = profileViewModel,
+                    onEdit = {
+                        navController.navigate("profile_edit") {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+
+            composable("profile_edit") {
+                EditProfileRoute(
+                    viewModel = profileViewModel,
+                    onBack = {
+                        navController.popBackStack()
                     }
                 )
             }
@@ -313,7 +347,10 @@ private fun FavoritesRoute(
                 favoriteState = favoriteState,
                 savedCopy = true,
                 onFavoriteChange = { favorite ->
-                    viewModel.setFavorite(character.id, favorite)
+                    viewModel.setFavorite(
+                        character.id,
+                        favorite
+                    )
                 }
             )
         }
@@ -389,7 +426,11 @@ private fun CharacterListScreen(
             onValueChange = onSearchQueryChange,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, top = 8.dp, end = 16.dp),
+                .padding(
+                    start = 16.dp,
+                    top = 8.dp,
+                    end = 16.dp
+                ),
             label = {
                 Text("Имя на английском")
             },
@@ -428,7 +469,8 @@ private fun CharacterListScreen(
                     focusManager.clearFocus()
                     onRetry()
                 },
-                enabled = state !is LoadState.Loading && !savingSearch
+                enabled = state !is LoadState.Loading &&
+                        !savingSearch
             ) {
                 Text("Обновить")
             }
@@ -461,7 +503,9 @@ private fun CharacterListScreen(
 
                 Text(
                     text = state.data.countText,
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp
+                    )
                 )
 
                 if (characters.isEmpty()) {
@@ -484,7 +528,9 @@ private fun CharacterListScreen(
                             .fillMaxWidth()
                             .weight(1f),
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(
+                            12.dp
+                        )
                     ) {
                         items(
                             items = characters,
@@ -499,11 +545,15 @@ private fun CharacterListScreen(
                                 Row(
                                     modifier = Modifier.padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(
+                                        12.dp
+                                    )
                                 ) {
                                     CharacterAvatar(character)
 
-                                    Column(Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier.weight(1f)
+                                    ) {
                                         Text(
                                             text = character.name,
                                             style = MaterialTheme.typography.titleMedium,
@@ -616,8 +666,12 @@ private fun CharacterDetailsScreen(
             )
         }
 
-        ConstraintLayout(Modifier.fillMaxWidth()) {
-            val (avatar, name, label, height, mass, more) = createRefs()
+        ConstraintLayout(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            val (avatar, name, label, height, mass, more) =
+                createRefs()
+
             val middle = createGuidelineFromStart(0.5f)
 
             Box(
@@ -682,7 +736,10 @@ private fun CharacterDetailsScreen(
                 }
             )
 
-            val rowBottom = createBottomBarrier(height, mass)
+            val rowBottom = createBottomBarrier(
+                height,
+                mass
+            )
 
             Column(
                 modifier = Modifier.constrainAs(more) {
