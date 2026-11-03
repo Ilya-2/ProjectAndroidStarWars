@@ -11,9 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,22 +24,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.navigation
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.example.projectandroidstarwars.domain.model.CharacterPage
 import com.example.projectandroidstarwars.domain.model.StarWarsCharacter
 import com.example.projectandroidstarwars.ui.characterImageResource
-import com.example.projectandroidstarwars.viewmodel.CharacterDetailsViewModel
-import com.example.projectandroidstarwars.viewmodel.CharactersViewModel
-import com.example.projectandroidstarwars.viewmodel.LoadState
-import com.example.projectandroidstarwars.viewmodel.characterDetailsViewModelFactory
+import com.example.projectandroidstarwars.viewmodel.*
 import androidx.lifecycle.viewmodel.compose.viewModel as composeViewModel
 
 private data class BottomTab(
@@ -53,6 +44,7 @@ private data class BottomTab(
 private val bottomTabs = listOf(
     BottomTab("people", "Персонажи", "★"),
     BottomTab("planets", "Планеты", "◎"),
+    BottomTab("favorites", "Избранное", "♥"),
     BottomTab("settings", "Настройки", "⚙")
 )
 
@@ -62,21 +54,54 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
     val route = destination?.route
-    val isDetails = route == "details/{characterId}"
+
+    val favoritesViewModel: FavoritesViewModel = composeViewModel(
+        factory = favoritesViewModelFactory
+    )
+
+    val filtersViewModel: FiltersViewModel = composeViewModel(
+        factory = filtersViewModelFactory
+    )
+
+    val badgeVisible by viewModel.badgeVisible.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val favoriteError = favoritesViewModel.actionError
+
+    LaunchedEffect(favoriteError) {
+        if (favoriteError != null) {
+            snackbarHostState.showSnackbar(favoriteError)
+            favoritesViewModel.dismissError()
+        }
+    }
+
+    fun openTab(target: String) {
+        navController.navigate(target) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     val title = when (route) {
         "details/{characterId}" -> "Досье персонажа"
         "planets" -> "Планеты"
-        "settings" -> "Настройки"
+        "favorites" -> "Избранное"
+        "settings" -> "Настройки поиска"
         else -> "Архив галактики"
     }
 
     Scaffold(
+        snackbarHost = {
+            SnackbarHost(snackbarHostState)
+        },
         topBar = {
             TopAppBar(
                 title = { Text(title) },
                 navigationIcon = {
-                    if (isDetails) {
+                    if (route == "details/{characterId}") {
                         TextButton(
                             onClick = { navController.popBackStack() }
                         ) {
@@ -97,19 +122,23 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                         selected = selected,
                         onClick = {
                             if (!selected) {
-                                navController.navigate(tab.route) {
-                                    popUpTo(
-                                        navController.graph
-                                            .findStartDestination().id
-                                    ) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                                openTab(tab.route)
                             }
                         },
-                        icon = { Text(tab.symbol) },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (
+                                        tab.route == "settings" &&
+                                        badgeVisible
+                                    ) {
+                                        Badge()
+                                    }
+                                }
+                            ) {
+                                Text(tab.symbol)
+                            }
+                        },
                         label = { Text(tab.title) }
                     )
                 }
@@ -130,15 +159,11 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
             ) {
                 composable("characters") {
                     CharacterListScreen(
-                        state = viewModel.state,
-                        searchQuery = viewModel.searchQuery,
-                        onSearchChange = viewModel::updateSearchQuery,
-                        onSearch = viewModel::search,
-                        onClear = {
-                            viewModel.updateSearchQuery("")
-                            viewModel.search()
+                        viewModel = viewModel,
+                        favoritesViewModel = favoritesViewModel,
+                        onOpenFilters = {
+                            openTab("settings")
                         },
-                        onRetry = viewModel::retry,
                         onCharacterClick = { id ->
                             navController.navigate("details/$id")
                         }
@@ -167,9 +192,11 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                             detailsViewModel::retry
                         )
 
-                        is LoadState.Success -> {
-                            CharacterDetailsScreen(state.data)
-                        }
+                        is LoadState.Success -> CharacterDetailsScreen(
+                            character = state.data,
+                            favoritesViewModel = favoritesViewModel,
+                            savedCopy = false
+                        )
                     }
                 }
             }
@@ -178,8 +205,26 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                 PlanetsScreen()
             }
 
+            composable("favorites") {
+                FavoritesScreen(favoritesViewModel) { character ->
+                    CharacterDetailsScreen(
+                        character = character,
+                        favoritesViewModel = favoritesViewModel,
+                        savedCopy = true
+                    )
+                }
+            }
+
             composable("settings") {
-                SettingsScreen()
+                FiltersScreen(
+                    viewModel = filtersViewModel,
+                    onDone = {
+                        openTab("people")
+                        // При сохранении тех же фильтров
+                        // тоже обновляем список.
+                        viewModel.retry()
+                    }
+                )
             }
         }
     }
@@ -187,39 +232,36 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
 
 @Composable
 private fun CharacterListScreen(
-    state: LoadState<CharacterPage>,
-    searchQuery: String,
-    onSearchChange: (String) -> Unit,
-    onSearch: () -> Unit,
-    onClear: () -> Unit,
-    onRetry: () -> Unit,
+    viewModel: CharactersViewModel,
+    favoritesViewModel: FavoritesViewModel,
+    onOpenFilters: () -> Unit,
     onCharacterClick: (Int) -> Unit
 ) {
     val focusManager = LocalFocusManager.current
+    val badgeVisible by viewModel.badgeVisible.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
+            value = viewModel.searchQuery,
+            onValueChange = viewModel::updateSearchQuery,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, top = 8.dp, end = 16.dp),
-            label = { Text("Имя на английском, например Luke") },
+            label = { Text("Имя на английском") },
+            enabled = !viewModel.savingSearch,
             singleLine = true
         )
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    onSearch()
-                }
+                    viewModel.search()
+                },
+                enabled = !viewModel.savingSearch
             ) {
                 Text("Найти")
             }
@@ -227,8 +269,9 @@ private fun CharacterListScreen(
             TextButton(
                 onClick = {
                     focusManager.clearFocus()
-                    onClear()
-                }
+                    viewModel.clearSearch()
+                },
+                enabled = !viewModel.savingSearch
             ) {
                 Text("Очистить")
             }
@@ -236,60 +279,88 @@ private fun CharacterListScreen(
             TextButton(
                 onClick = {
                     focusManager.clearFocus()
-                    onRetry()
+                    viewModel.retry()
                 },
-                enabled = state !is LoadState.Loading
+                enabled = viewModel.state !is LoadState.Loading &&
+                        !viewModel.savingSearch
             ) {
                 Text("Обновить")
             }
         }
 
-        when (state) {
+        TextButton(onClick = onOpenFilters) {
+            Text(
+                if (badgeVisible) {
+                    "Фильтры применены • Изменить"
+                } else {
+                    "Настроить фильтры"
+                }
+            )
+        }
+
+        when (val state = viewModel.state) {
             LoadState.Loading -> LoadingScreen()
 
             is LoadState.Error -> ErrorScreen(
                 state.message,
-                onRetry
+                viewModel::retry
             )
 
             is LoadState.Success -> {
-                val page = state.data
+                val characters = state.data.characters
 
                 Text(
-                    text = "Загружено: ${page.characters.size}",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    style = MaterialTheme.typography.labelLarge
+                    "Показано: ${characters.size}",
+                    Modifier.padding(horizontal = 16.dp)
                 )
 
-                if (page.characters.isEmpty()) {
+                if (characters.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
+                        Modifier.fillMaxWidth().weight(1f).padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Ничего не найдено.\n" +
-                                    "Введите другое имя или нажмите «Очистить».",
-                            modifier = Modifier.padding(16.dp),
+                            "Ничего не найдено.\nИзмените настройки поиска.",
                             textAlign = TextAlign.Center
                         )
                     }
                 } else {
-                    key(page.page, page.characters.first().id) {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(
-                                items = page.characters,
-                                key = { it.id }
-                            ) { character ->
-                                CharacterCard(character) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(characters, key = { it.id }) { character ->
+                            Card(
+                                onClick = {
                                     onCharacterClick(character.id)
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    CharacterAvatar(character)
+
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            character.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "Рост: ${measurement(character.height, "см")}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+
+                                    FavoriteButton(
+                                        character,
+                                        favoritesViewModel,
+                                        compact = true
+                                    )
                                 }
                             }
                         }
@@ -301,44 +372,29 @@ private fun CharacterListScreen(
 }
 
 @Composable
-private fun CharacterCard(
+private fun FavoriteButton(
     character: StarWarsCharacter,
-    onClick: () -> Unit
+    viewModel: FavoritesViewModel,
+    compact: Boolean = false
 ) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
+    val favorite = viewModel.isFavorite(character.id)
+    val ready = viewModel.state is LoadState.Success
+    val pending = character.id in viewModel.pendingIds
+
+    TextButton(
+        onClick = {
+            viewModel.setFavorite(character, !favorite)
+        },
+        enabled = ready && !pending
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            CharacterAvatar(character)
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    character.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Text(
-                    "Рост: ${measurement(character.height, "см")}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Text(
-                    "Рождение: ${character.birthYear}",
-                    style = MaterialTheme.typography.bodySmall
-                )
+        Text(
+            when {
+                pending -> "…"
+                compact -> if (favorite) "★" else "☆"
+                favorite -> "★ Удалить из избранного"
+                else -> "☆ Добавить в избранное"
             }
-
-            Text("›", style = MaterialTheme.typography.headlineMedium)
-        }
+        )
     }
 }
 
@@ -347,7 +403,7 @@ private fun CharacterAvatar(
     character: StarWarsCharacter,
     size: Dp = 64.dp
 ) {
-    val imageResource = characterImageResource(character.id)
+    val resource = characterImageResource(character.id)
 
     Box(
         modifier = Modifier
@@ -356,36 +412,44 @@ private fun CharacterAvatar(
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
-        if (imageResource != null) {
+        if (resource != null) {
             Image(
-                painter = painterResource(imageResource),
+                painter = painterResource(resource),
                 contentDescription = character.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
             )
         } else {
             Text(
                 "★",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary
+                style = MaterialTheme.typography.headlineLarge
             )
         }
     }
 }
 
 @Composable
-private fun CharacterDetailsScreen(character: StarWarsCharacter) {
+private fun CharacterDetailsScreen(
+    character: StarWarsCharacter,
+    favoritesViewModel: FavoritesViewModel,
+    savedCopy: Boolean
+) {
     Column(
-        modifier = Modifier
+        Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        ConstraintLayout(Modifier.fillMaxWidth()) {
-            val (avatar, name, label) = createRefs()
-            val (height, mass, birthYear, eyeColor) = createRefs()
-            val (gender, heading, description, note) = createRefs()
+        if (savedCopy) {
+            Text(
+                "Сохранённая копия • Доступна без интернета",
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
 
+        ConstraintLayout(Modifier.fillMaxWidth()) {
+            val (avatar, name, label, height, mass, more) = createRefs()
             val middle = createGuidelineFromStart(0.5f)
 
             Box(
@@ -402,7 +466,7 @@ private fun CharacterDetailsScreen(character: StarWarsCharacter) {
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.constrainAs(name) {
-                    start.linkTo(avatar.end, margin = 16.dp)
+                    start.linkTo(avatar.end, 16.dp)
                     end.linkTo(parent.end)
                     top.linkTo(parent.top)
                     width = Dimension.fillToConstraints
@@ -410,13 +474,11 @@ private fun CharacterDetailsScreen(character: StarWarsCharacter) {
             )
 
             Text(
-                "STAR WARS • ДОСЬЕ №${character.id}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                "Досье №${character.id}",
                 modifier = Modifier.constrainAs(label) {
                     start.linkTo(name.start)
                     end.linkTo(parent.end)
-                    top.linkTo(name.bottom, margin = 8.dp)
+                    top.linkTo(name.bottom, 8.dp)
                     width = Dimension.fillToConstraints
                 }
             )
@@ -428,8 +490,8 @@ private fun CharacterDetailsScreen(character: StarWarsCharacter) {
                 measurement(character.height, "см"),
                 Modifier.constrainAs(height) {
                     start.linkTo(parent.start)
-                    end.linkTo(middle, margin = 6.dp)
-                    top.linkTo(headerBottom, margin = 24.dp)
+                    end.linkTo(middle, 6.dp)
+                    top.linkTo(headerBottom, 20.dp)
                     width = Dimension.fillToConstraints
                 }
             )
@@ -438,90 +500,45 @@ private fun CharacterDetailsScreen(character: StarWarsCharacter) {
                 "Масса",
                 measurement(character.mass, "кг"),
                 Modifier.constrainAs(mass) {
-                    start.linkTo(middle, margin = 6.dp)
+                    start.linkTo(middle, 6.dp)
                     end.linkTo(parent.end)
-                    top.linkTo(headerBottom, margin = 24.dp)
+                    top.linkTo(headerBottom, 20.dp)
                     width = Dimension.fillToConstraints
                 }
             )
 
-            val firstRowBottom = createBottomBarrier(height, mass)
+            val rowBottom = createBottomBarrier(height, mass)
 
-            InfoCard(
-                "Год рождения",
-                character.birthYear,
-                Modifier.constrainAs(birthYear) {
-                    start.linkTo(parent.start)
-                    end.linkTo(middle, margin = 6.dp)
-                    top.linkTo(firstRowBottom, margin = 12.dp)
-                    width = Dimension.fillToConstraints
-                }
-            )
-
-            InfoCard(
-                "Цвет глаз",
-                character.eyeColor,
-                Modifier.constrainAs(eyeColor) {
-                    start.linkTo(middle, margin = 6.dp)
-                    end.linkTo(parent.end)
-                    top.linkTo(firstRowBottom, margin = 12.dp)
-                    width = Dimension.fillToConstraints
-                }
-            )
-
-            val secondRowBottom = createBottomBarrier(birthYear, eyeColor)
-
-            InfoCard(
-                "Пол",
-                character.gender,
-                Modifier.constrainAs(gender) {
+            Column(
+                modifier = Modifier.constrainAs(more) {
                     start.linkTo(parent.start)
                     end.linkTo(parent.end)
-                    top.linkTo(secondRowBottom, margin = 12.dp)
+                    top.linkTo(rowBottom, 12.dp)
                     width = Dimension.fillToConstraints
-                }
-            )
-
-            Text(
-                "Дополнительные сведения",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.constrainAs(heading) {
-                    start.linkTo(parent.start)
-                    end.linkTo(parent.end)
-                    top.linkTo(gender.bottom, margin = 24.dp)
-                    width = Dimension.fillToConstraints
-                }
-            )
-
-            Text(
-                "Цвет волос: ${character.hairColor}\n" +
-                        "Цвет кожи: ${character.skinColor}\n" +
-                        "Фильмов в SWAPI: ${character.filmCount}",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.constrainAs(description) {
-                    start.linkTo(parent.start)
-                    end.linkTo(parent.end)
-                    top.linkTo(heading.bottom, margin = 12.dp)
-                    width = Dimension.fillToConstraints
-                }
-            )
-
-            Text(
-                "BBY — до битвы при Явине.\n" +
-                        "ABY — после битвы при Явине.\n\n" +
-                        "Данные: swapi.dev.\n" +
-                        "Изображения: Wookieepedia / Fandom, Lucasfilm.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.constrainAs(note) {
-                    start.linkTo(parent.start)
-                    end.linkTo(parent.end)
-                    top.linkTo(description.bottom, margin = 20.dp)
-                    width = Dimension.fillToConstraints
-                }
-            )
+                },
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                InfoCard("Год рождения", character.birthYear)
+                InfoCard("Пол", character.gender)
+                InfoCard("Цвет глаз", character.eyeColor)
+                InfoCard("Цвет волос", character.hairColor)
+                InfoCard("Цвет кожи", character.skinColor)
+                InfoCard("Фильмов в SWAPI", character.filmCount.toString())
+            }
         }
+
+        FavoriteButton(
+            character,
+            favoritesViewModel
+        )
+
+        Text(
+            "BBY — до битвы при Явине.\n" +
+                    "ABY — после битвы при Явине.\n\n" +
+                    "Данные: swapi.dev.\n" +
+                    "Изображения: Wookieepedia / Fandom, Lucasfilm.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
@@ -529,23 +546,19 @@ private fun CharacterDetailsScreen(character: StarWarsCharacter) {
 private fun InfoCard(
     title: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier.fillMaxWidth()
 ) {
     Card(modifier) {
         Column(
             Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
                 title,
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.primary
             )
-            Text(
-                value,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Text(value)
         }
     }
 }
@@ -567,7 +580,7 @@ private fun LoadingScreen() {
     ) {
         CircularProgressIndicator()
         Text(
-            "Загружаем данные из SWAPI…",
+            "Загрузка…",
             Modifier.padding(top = 16.dp)
         )
     }
@@ -586,46 +599,13 @@ private fun ErrorScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            "Не удалось загрузить данные",
-            style = MaterialTheme.typography.titleLarge,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            message,
-            Modifier.padding(vertical = 16.dp),
-            textAlign = TextAlign.Center
-        )
-        Button(onClick = onRetry) {
+        Text(message, textAlign = TextAlign.Center)
+
+        Button(
+            onClick = onRetry,
+            modifier = Modifier.padding(top = 16.dp)
+        ) {
             Text("Повторить")
         }
-    }
-}
-
-@Composable
-private fun SettingsScreen() {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Text(
-            "⚙",
-            style = MaterialTheme.typography.displayLarge,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            "Настройки приложения",
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            "Персонажи и планеты загружаются из SWAPI. " +
-                    "Фотографии сохранены в приложении.",
-            textAlign = TextAlign.Center
-        )
     }
 }
