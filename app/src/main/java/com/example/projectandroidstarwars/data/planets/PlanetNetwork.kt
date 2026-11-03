@@ -1,16 +1,12 @@
 package com.example.projectandroidstarwars.data.planets
 
+import com.example.projectandroidstarwars.data.remote.NetworkRequestExecutor
 import com.example.projectandroidstarwars.domain.planets.Planet
 import com.example.projectandroidstarwars.domain.planets.PlanetLoadException
 import com.example.projectandroidstarwars.domain.planets.PlanetRepository
-import com.google.gson.JsonParseException
 import com.google.gson.annotations.SerializedName
-import java.io.IOException
-import java.net.SocketTimeoutException
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import retrofit2.HttpException
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -89,12 +85,19 @@ private fun PlanetDto.toDomain(): Planet {
 }
 
 class NetworkPlanetRepository(
-    private val api: PlanetApi
+    private val api: PlanetApi,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : PlanetRepository {
+
+    private val requests = NetworkRequestExecutor(
+        createException = ::PlanetLoadException,
+        notFoundMessage = "Планета не найдена.",
+        ioDispatcher = ioDispatcher
+    )
 
     override suspend fun getPlanets(
         search: String
-    ): List<Planet> = request {
+    ): List<Planet> = requests.execute {
         val response = api.getPlanets(
             search = search.trim().takeIf { it.isNotEmpty() },
             page = 1
@@ -104,54 +107,16 @@ class NetworkPlanetRepository(
             "Отсутствует список планет"
         }
 
-        // Оставляем максимум пять планет.
-        // Вторую страницу не запрашиваем.
         results
             .take(MAX_PLANETS)
             .map { it.toDomain() }
     }
 
-    override suspend fun getPlanet(id: Int): Planet = request {
+    override suspend fun getPlanet(
+        id: Int
+    ): Planet = requests.execute {
         require(id > 0)
         api.getPlanet(id).toDomain()
-    }
-
-    private suspend fun <T> request(
-        block: suspend () -> T
-    ): T = withContext(Dispatchers.IO) {
-        try {
-            block()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: HttpException) {
-            val message = when (e.code()) {
-                404 -> "Планета не найдена."
-                429 -> "Слишком много запросов. Попробуйте позже."
-                else -> "Ошибка сервера: ${e.code()}."
-            }
-
-            throw PlanetLoadException(message, e)
-        } catch (e: SocketTimeoutException) {
-            throw PlanetLoadException(
-                "Сервер долго не отвечает. Повторите попытку.",
-                e
-            )
-        } catch (e: JsonParseException) {
-            throw PlanetLoadException(
-                "Получен некорректный ответ сервера.",
-                e
-            )
-        } catch (e: IOException) {
-            throw PlanetLoadException(
-                "Не удалось подключиться. Проверьте интернет.",
-                e
-            )
-        } catch (e: IllegalArgumentException) {
-            throw PlanetLoadException(
-                "В ответе сервера отсутствуют необходимые данные.",
-                e
-            )
-        }
     }
 
     companion object {

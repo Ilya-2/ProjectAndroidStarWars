@@ -1,4 +1,4 @@
-package com.example.projectandroidstarwars.data.local
+package com.example.projectandroidstarwars.domain.state
 
 import com.example.projectandroidstarwars.domain.model.CharacterFilters
 import kotlinx.coroutines.flow.MutableStateFlow

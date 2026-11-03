@@ -19,7 +19,8 @@ val charactersViewModelFactory = viewModelFactory {
             badgeCache = AppContainer.filterBadgeCache,
             hasPhoto = { id ->
                 characterImageResource(id) != null
-            }
+            },
+            favoritesRepository = AppContainer.favoritesRepository
         )
     }
 }
@@ -32,7 +33,8 @@ val characterDetailsViewModelFactory = viewModelFactory {
 
         CharacterDetailsViewModel(
             savedStateHandle = createSavedStateHandle(),
-            getCharacter = AppContainer.getCharacter
+            getCharacter = AppContainer.getCharacter,
+            favoritesRepository = AppContainer.favoritesRepository
         )
     }
 }

@@ -8,24 +8,24 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.projectandroidstarwars.domain.model.GenderFilter
-import com.example.projectandroidstarwars.viewmodel.FiltersViewModel
+import com.example.projectandroidstarwars.viewmodel.FiltersUiState
 
 @Composable
 fun FiltersScreen(
-    viewModel: FiltersViewModel,
-    onDone: () -> Unit
+    state: FiltersUiState,
+    onNameChange: (String) -> Unit,
+    onOnlyWithPhotoChange: (Boolean) -> Unit,
+    onGenderChange: (GenderFilter) -> Unit,
+    onMaxMassChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onReset: () -> Unit
 ) {
-    LaunchedEffect(Unit) {
-        viewModel.loadSaved()
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -39,14 +39,14 @@ fun FiltersScreen(
         )
 
         OutlinedTextField(
-            value = viewModel.name,
-            onValueChange = viewModel::updateName,
+            value = state.name,
+            onValueChange = onNameChange,
             modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Имя на английском")
             },
             singleLine = true,
-            enabled = !viewModel.saving
+            enabled = !state.saving
         )
 
         Row(
@@ -54,9 +54,9 @@ fun FiltersScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
-                checked = viewModel.onlyWithPhoto,
-                onCheckedChange = viewModel::updateOnlyWithPhoto,
-                enabled = !viewModel.saving
+                checked = state.onlyWithPhoto,
+                onCheckedChange = onOnlyWithPhotoChange,
+                enabled = !state.saving
             )
 
             Text(
@@ -80,20 +80,20 @@ fun FiltersScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .selectable(
-                            selected = viewModel.gender == option,
-                            enabled = !viewModel.saving,
+                            selected = state.gender == option,
+                            enabled = !state.saving,
                             role = Role.RadioButton,
                             onClick = {
-                                viewModel.updateGender(option)
+                                onGenderChange(option)
                             }
                         )
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
-                        selected = viewModel.gender == option,
+                        selected = state.gender == option,
                         onClick = null,
-                        enabled = !viewModel.saving
+                        enabled = !state.saving
                     )
 
                     Text(
@@ -105,8 +105,8 @@ fun FiltersScreen(
         }
 
         OutlinedTextField(
-            value = viewModel.maxMassText,
-            onValueChange = viewModel::updateMaxMass,
+            value = state.maxMassText,
+            onValueChange = onMaxMassChange,
             modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Максимальная масса, кг")
@@ -121,7 +121,7 @@ fun FiltersScreen(
                 keyboardType = KeyboardType.Decimal
             ),
             singleLine = true,
-            enabled = !viewModel.saving
+            enabled = !state.saving
         )
 
         Text(
@@ -132,7 +132,7 @@ fun FiltersScreen(
             style = MaterialTheme.typography.bodySmall
         )
 
-        viewModel.error?.let { message ->
+        state.error?.let { message ->
             Text(
                 text = message,
                 color = MaterialTheme.colorScheme.error
@@ -140,25 +140,17 @@ fun FiltersScreen(
         }
 
         Button(
-            onClick = {
-                viewModel.save(onDone)
-            },
+            onClick = onSave,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !viewModel.saving
+            enabled = !state.saving
         ) {
-            Text(
-                if (viewModel.saving) {
-                    "Сохранение…"
-                } else {
-                    "Готово"
-                }
-            )
+            Text(state.saveButtonText)
         }
 
         OutlinedButton(
-            onClick = viewModel::resetDraft,
+            onClick = onReset,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !viewModel.saving
+            enabled = !state.saving
         ) {
             Text("Сбросить")
         }
