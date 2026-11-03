@@ -33,11 +33,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.projectandroidstarwars.ui.theme.ProjectAndroidStarWarsTheme
 import com.example.projectandroidstarwars.ui.theme.StarWarsApp
-import com.example.projectandroidstarwars.viewmodel.CharactersViewModel
-import com.example.projectandroidstarwars.viewmodel.charactersViewModelFactory
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -61,14 +58,7 @@ class MainActivity : ComponentActivity() {
 
                     WelcomeScreen()
                 } else {
-                    val charactersViewModel: CharactersViewModel =
-                        viewModel(
-                            factory = charactersViewModelFactory
-                        )
-
-                    StarWarsApp(
-                        viewModel = charactersViewModel
-                    )
+                    StarWarsApp()
                 }
             }
         }

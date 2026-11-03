@@ -24,13 +24,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.example.projectandroidstarwars.domain.model.StarWarsCharacter
 import com.example.projectandroidstarwars.ui.characterImageResource
 import com.example.projectandroidstarwars.viewmodel.*
 import androidx.lifecycle.viewmodel.compose.viewModel as composeViewModel
@@ -49,30 +50,24 @@ private val bottomTabs = listOf(
 )
 
 @Composable
-fun StarWarsApp(viewModel: CharactersViewModel) {
+fun StarWarsApp() {
+    val appViewModel: StarWarsAppViewModel = composeViewModel(
+        factory = starWarsAppViewModelFactory
+    )
+
+    val badgeVisible by appViewModel.badgeVisible
+        .collectAsStateWithLifecycle()
+
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val destination = backStackEntry?.destination
     val route = destination?.route
 
-    val favoritesViewModel: FavoritesViewModel = composeViewModel(
-        factory = favoritesViewModelFactory
-    )
-
-    val filtersViewModel: FiltersViewModel = composeViewModel(
-        factory = filtersViewModelFactory
-    )
-
-    val badgeVisible by viewModel.badgeVisible.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val favoriteError = favoritesViewModel.actionError
-
-    LaunchedEffect(favoriteError) {
-        if (favoriteError != null) {
-            snackbarHostState.showSnackbar(favoriteError)
-            favoritesViewModel.dismissError()
-        }
+    val showError: suspend (String) -> Unit = { message ->
+        snackbarHostState.showSnackbar(message)
+        Unit
     }
 
     fun openTab(target: String) {
@@ -80,6 +75,7 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
             popUpTo(navController.graph.findStartDestination().id) {
                 saveState = true
             }
+
             launchSingleTop = true
             restoreState = true
         }
@@ -99,11 +95,15 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
         },
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = {
+                    Text(title)
+                },
                 navigationIcon = {
                     if (route == "details/{characterId}") {
                         TextButton(
-                            onClick = { navController.popBackStack() }
+                            onClick = {
+                                navController.popBackStack()
+                            }
                         ) {
                             Text("Назад")
                         }
@@ -139,7 +139,9 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                                 Text(tab.symbol)
                             }
                         },
-                        label = { Text(tab.title) }
+                        label = {
+                            Text(tab.title)
+                        }
                     )
                 }
             }
@@ -158,15 +160,14 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                 route = "people"
             ) {
                 composable("characters") {
-                    CharacterListScreen(
-                        viewModel = viewModel,
-                        favoritesViewModel = favoritesViewModel,
+                    CharacterListRoute(
                         onOpenFilters = {
                             openTab("settings")
                         },
                         onCharacterClick = { id ->
                             navController.navigate("details/$id")
-                        }
+                        },
+                        onShowError = showError
                     )
                 }
 
@@ -177,27 +178,10 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
                             type = NavType.IntType
                         }
                     )
-                ) { entry ->
-                    val detailsViewModel: CharacterDetailsViewModel =
-                        composeViewModel(
-                            viewModelStoreOwner = entry,
-                            factory = characterDetailsViewModelFactory
-                        )
-
-                    when (val state = detailsViewModel.state) {
-                        LoadState.Loading -> LoadingScreen()
-
-                        is LoadState.Error -> ErrorScreen(
-                            state.message,
-                            detailsViewModel::retry
-                        )
-
-                        is LoadState.Success -> CharacterDetailsScreen(
-                            character = state.data,
-                            favoritesViewModel = favoritesViewModel,
-                            savedCopy = false
-                        )
-                    }
+                ) {
+                    CharacterDetailsRoute(
+                        onShowError = showError
+                    )
                 }
             }
 
@@ -206,23 +190,15 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
             }
 
             composable("favorites") {
-                FavoritesScreen(favoritesViewModel) { character ->
-                    CharacterDetailsScreen(
-                        character = character,
-                        favoritesViewModel = favoritesViewModel,
-                        savedCopy = true
-                    )
-                }
+                FavoritesRoute(
+                    onShowError = showError
+                )
             }
 
             composable("settings") {
-                FiltersScreen(
-                    viewModel = filtersViewModel,
+                FiltersRoute(
                     onDone = {
                         openTab("people")
-                        // При сохранении тех же фильтров
-                        // тоже обновляем список.
-                        viewModel.retry()
                     }
                 )
             }
@@ -231,37 +207,208 @@ fun StarWarsApp(viewModel: CharactersViewModel) {
 }
 
 @Composable
+private fun CharacterListRoute(
+    onOpenFilters: () -> Unit,
+    onCharacterClick: (Int) -> Unit,
+    onShowError: suspend (String) -> Unit
+) {
+    val viewModel: CharactersViewModel = composeViewModel(
+        factory = charactersViewModelFactory
+    )
+
+    val badgeVisible by viewModel.badgeVisible
+        .collectAsStateWithLifecycle()
+
+    val favoriteState = viewModel.favoriteUiState
+
+    FavoriteErrorEffect(
+        error = favoriteState.errorMessage,
+        onDismiss = viewModel::dismissFavoriteError,
+        onShowError = onShowError
+    )
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.onResume()
+    }
+
+    CharacterListScreen(
+        state = viewModel.state,
+        searchQuery = viewModel.searchQuery,
+        savingSearch = viewModel.savingSearch,
+        badgeVisible = badgeVisible,
+        favoriteState = favoriteState,
+        onSearchQueryChange = viewModel::updateSearchQuery,
+        onSearch = viewModel::search,
+        onClearSearch = viewModel::clearSearch,
+        onRetry = viewModel::retry,
+        onFavoriteChange = viewModel::setFavorite,
+        onOpenFilters = onOpenFilters,
+        onCharacterClick = onCharacterClick
+    )
+}
+
+@Composable
+private fun CharacterDetailsRoute(
+    onShowError: suspend (String) -> Unit
+) {
+    val viewModel: CharacterDetailsViewModel = composeViewModel(
+        factory = characterDetailsViewModelFactory
+    )
+
+    val favoriteState = viewModel.favoriteUiState
+
+    FavoriteErrorEffect(
+        error = favoriteState.errorMessage,
+        onDismiss = viewModel::dismissFavoriteError,
+        onShowError = onShowError
+    )
+
+    when (val state = viewModel.state) {
+        LoadState.Loading -> {
+            LoadingScreen()
+        }
+
+        is LoadState.Error -> {
+            ErrorScreen(
+                message = state.message,
+                onRetry = viewModel::retry
+            )
+        }
+
+        is LoadState.Success -> {
+            CharacterDetailsScreen(
+                character = state.data,
+                favoriteState = favoriteState,
+                savedCopy = false,
+                onFavoriteChange = viewModel::setFavorite
+            )
+        }
+    }
+}
+
+@Composable
+private fun FavoritesRoute(
+    onShowError: suspend (String) -> Unit
+) {
+    val viewModel: FavoritesViewModel = composeViewModel(
+        factory = favoritesViewModelFactory
+    )
+
+    val favoriteState = viewModel.favoriteUiState
+
+    FavoriteErrorEffect(
+        error = favoriteState.errorMessage,
+        onDismiss = viewModel::dismissFavoriteError,
+        onShowError = onShowError
+    )
+
+    FavoritesScreen(
+        state = viewModel.state,
+        pendingIds = favoriteState.pendingIds,
+        onRetry = viewModel::retry,
+        onRemove = viewModel::remove,
+        details = { character ->
+            CharacterDetailsScreen(
+                character = character,
+                favoriteState = favoriteState,
+                savedCopy = true,
+                onFavoriteChange = { favorite ->
+                    viewModel.setFavorite(character.id, favorite)
+                }
+            )
+        }
+    )
+}
+
+@Composable
+private fun FiltersRoute(
+    onDone: () -> Unit
+) {
+    val viewModel: FiltersViewModel = composeViewModel(
+        factory = filtersViewModelFactory
+    )
+
+    val currentOnDone by rememberUpdatedState(onDone)
+
+    LaunchedEffect(viewModel) {
+        viewModel.loadSaved()
+    }
+
+    FiltersScreen(
+        state = viewModel.uiState,
+        onNameChange = viewModel::updateName,
+        onOnlyWithPhotoChange = viewModel::updateOnlyWithPhoto,
+        onGenderChange = viewModel::updateGender,
+        onMaxMassChange = viewModel::updateMaxMass,
+        onSave = {
+            viewModel.save {
+                currentOnDone()
+            }
+        },
+        onReset = viewModel::resetDraft
+    )
+}
+
+@Composable
+private fun FavoriteErrorEffect(
+    error: String?,
+    onDismiss: () -> Unit,
+    onShowError: suspend (String) -> Unit
+) {
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val currentOnShowError by rememberUpdatedState(onShowError)
+
+    LaunchedEffect(error) {
+        if (error != null) {
+            currentOnShowError(error)
+            currentOnDismiss()
+        }
+    }
+}
+
+@Composable
 private fun CharacterListScreen(
-    viewModel: CharactersViewModel,
-    favoritesViewModel: FavoritesViewModel,
+    state: LoadState<CharacterListUiModel>,
+    searchQuery: String,
+    savingSearch: Boolean,
+    badgeVisible: Boolean,
+    favoriteState: FavoriteUiState,
+    onSearchQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onClearSearch: () -> Unit,
+    onRetry: () -> Unit,
+    onFavoriteChange: (Int, Boolean) -> Unit,
     onOpenFilters: () -> Unit,
     onCharacterClick: (Int) -> Unit
 ) {
     val focusManager = LocalFocusManager.current
-    val badgeVisible by viewModel.badgeVisible.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
-            value = viewModel.searchQuery,
-            onValueChange = viewModel::updateSearchQuery,
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, top = 8.dp, end = 16.dp),
-            label = { Text("Имя на английском") },
-            enabled = !viewModel.savingSearch,
+            label = {
+                Text("Имя на английском")
+            },
+            enabled = !savingSearch,
             singleLine = true
         )
 
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    viewModel.search()
+                    onSearch()
                 },
-                enabled = !viewModel.savingSearch
+                enabled = !savingSearch
             ) {
                 Text("Найти")
             }
@@ -269,9 +416,9 @@ private fun CharacterListScreen(
             TextButton(
                 onClick = {
                     focusManager.clearFocus()
-                    viewModel.clearSearch()
+                    onClearSearch()
                 },
-                enabled = !viewModel.savingSearch
+                enabled = !savingSearch
             ) {
                 Text("Очистить")
             }
@@ -279,10 +426,9 @@ private fun CharacterListScreen(
             TextButton(
                 onClick = {
                     focusManager.clearFocus()
-                    viewModel.retry()
+                    onRetry()
                 },
-                enabled = viewModel.state !is LoadState.Loading &&
-                        !viewModel.savingSearch
+                enabled = state !is LoadState.Loading && !savingSearch
             ) {
                 Text("Обновить")
             }
@@ -298,39 +444,52 @@ private fun CharacterListScreen(
             )
         }
 
-        when (val state = viewModel.state) {
-            LoadState.Loading -> LoadingScreen()
+        when (state) {
+            LoadState.Loading -> {
+                LoadingScreen()
+            }
 
-            is LoadState.Error -> ErrorScreen(
-                state.message,
-                viewModel::retry
-            )
+            is LoadState.Error -> {
+                ErrorScreen(
+                    message = state.message,
+                    onRetry = onRetry
+                )
+            }
 
             is LoadState.Success -> {
                 val characters = state.data.characters
 
                 Text(
-                    "Показано: ${characters.size}",
-                    Modifier.padding(horizontal = 16.dp)
+                    text = state.data.countText,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
                 if (characters.isEmpty()) {
                     Box(
-                        Modifier.fillMaxWidth().weight(1f).padding(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "Ничего не найдено.\nИзмените настройки поиска.",
+                            text = "Ничего не найдено.\n" +
+                                    "Измените настройки поиска.",
                             textAlign = TextAlign.Center
                         )
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(characters, key = { it.id }) { character ->
+                        items(
+                            items = characters,
+                            key = { it.id }
+                        ) { character ->
                             Card(
                                 onClick = {
                                     onCharacterClick(character.id)
@@ -338,7 +497,7 @@ private fun CharacterListScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
-                                    Modifier.padding(12.dp),
+                                    modifier = Modifier.padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
@@ -346,20 +505,30 @@ private fun CharacterListScreen(
 
                                     Column(Modifier.weight(1f)) {
                                         Text(
-                                            character.name,
+                                            text = character.name,
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold
                                         )
+
                                         Text(
-                                            "Рост: ${measurement(character.height, "см")}",
+                                            text = character.heightText,
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                     }
 
                                     FavoriteButton(
-                                        character,
-                                        favoritesViewModel,
-                                        compact = true
+                                        favorite = character.id in
+                                                favoriteState.favoriteIds,
+                                        ready = favoriteState.ready,
+                                        pending = character.id in
+                                                favoriteState.pendingIds,
+                                        compact = true,
+                                        onFavoriteChange = { favorite ->
+                                            onFavoriteChange(
+                                                character.id,
+                                                favorite
+                                            )
+                                        }
                                     )
                                 }
                             }
@@ -373,17 +542,15 @@ private fun CharacterListScreen(
 
 @Composable
 private fun FavoriteButton(
-    character: StarWarsCharacter,
-    viewModel: FavoritesViewModel,
+    favorite: Boolean,
+    ready: Boolean,
+    pending: Boolean,
+    onFavoriteChange: (Boolean) -> Unit,
     compact: Boolean = false
 ) {
-    val favorite = viewModel.isFavorite(character.id)
-    val ready = viewModel.state is LoadState.Success
-    val pending = character.id in viewModel.pendingIds
-
     TextButton(
         onClick = {
-            viewModel.setFavorite(character, !favorite)
+            onFavoriteChange(!favorite)
         },
         enabled = ready && !pending
     ) {
@@ -400,7 +567,7 @@ private fun FavoriteButton(
 
 @Composable
 private fun CharacterAvatar(
-    character: StarWarsCharacter,
+    character: CharacterUiModel,
     size: Dp = 64.dp
 ) {
     val resource = characterImageResource(character.id)
@@ -421,7 +588,7 @@ private fun CharacterAvatar(
             )
         } else {
             Text(
-                "★",
+                text = "★",
                 style = MaterialTheme.typography.headlineLarge
             )
         }
@@ -430,12 +597,13 @@ private fun CharacterAvatar(
 
 @Composable
 private fun CharacterDetailsScreen(
-    character: StarWarsCharacter,
-    favoritesViewModel: FavoritesViewModel,
-    savedCopy: Boolean
+    character: CharacterUiModel,
+    favoriteState: FavoriteUiState,
+    savedCopy: Boolean,
+    onFavoriteChange: (Boolean) -> Unit
 ) {
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
@@ -443,7 +611,7 @@ private fun CharacterDetailsScreen(
     ) {
         if (savedCopy) {
             Text(
-                "Сохранённая копия • Доступна без интернета",
+                text = "Сохранённая копия • Доступна без интернета",
                 style = MaterialTheme.typography.labelLarge
             )
         }
@@ -453,16 +621,19 @@ private fun CharacterDetailsScreen(
             val middle = createGuidelineFromStart(0.5f)
 
             Box(
-                Modifier.constrainAs(avatar) {
+                modifier = Modifier.constrainAs(avatar) {
                     start.linkTo(parent.start)
                     top.linkTo(parent.top)
                 }
             ) {
-                CharacterAvatar(character, 96.dp)
+                CharacterAvatar(
+                    character = character,
+                    size = 96.dp
+                )
             }
 
             Text(
-                character.name,
+                text = character.name,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.constrainAs(name) {
@@ -474,7 +645,7 @@ private fun CharacterDetailsScreen(
             )
 
             Text(
-                "Досье №${character.id}",
+                text = character.dossierTitle,
                 modifier = Modifier.constrainAs(label) {
                     start.linkTo(name.start)
                     end.linkTo(parent.end)
@@ -483,12 +654,16 @@ private fun CharacterDetailsScreen(
                 }
             )
 
-            val headerBottom = createBottomBarrier(avatar, name, label)
+            val headerBottom = createBottomBarrier(
+                avatar,
+                name,
+                label
+            )
 
             InfoCard(
-                "Рост",
-                measurement(character.height, "см"),
-                Modifier.constrainAs(height) {
+                title = "Рост",
+                value = character.heightValue,
+                modifier = Modifier.constrainAs(height) {
                     start.linkTo(parent.start)
                     end.linkTo(middle, 6.dp)
                     top.linkTo(headerBottom, 20.dp)
@@ -497,9 +672,9 @@ private fun CharacterDetailsScreen(
             )
 
             InfoCard(
-                "Масса",
-                measurement(character.mass, "кг"),
-                Modifier.constrainAs(mass) {
+                title = "Масса",
+                value = character.massValue,
+                modifier = Modifier.constrainAs(mass) {
                     start.linkTo(middle, 6.dp)
                     end.linkTo(parent.end)
                     top.linkTo(headerBottom, 20.dp)
@@ -518,22 +693,47 @@ private fun CharacterDetailsScreen(
                 },
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                InfoCard("Год рождения", character.birthYear)
-                InfoCard("Пол", character.gender)
-                InfoCard("Цвет глаз", character.eyeColor)
-                InfoCard("Цвет волос", character.hairColor)
-                InfoCard("Цвет кожи", character.skinColor)
-                InfoCard("Фильмов в SWAPI", character.filmCount.toString())
+                InfoCard(
+                    title = "Год рождения",
+                    value = character.birthYear
+                )
+
+                InfoCard(
+                    title = "Пол",
+                    value = character.gender
+                )
+
+                InfoCard(
+                    title = "Цвет глаз",
+                    value = character.eyeColor
+                )
+
+                InfoCard(
+                    title = "Цвет волос",
+                    value = character.hairColor
+                )
+
+                InfoCard(
+                    title = "Цвет кожи",
+                    value = character.skinColor
+                )
+
+                InfoCard(
+                    title = "Фильмов в SWAPI",
+                    value = character.filmCountText
+                )
             }
         }
 
         FavoriteButton(
-            character,
-            favoritesViewModel
+            favorite = character.id in favoriteState.favoriteIds,
+            ready = favoriteState.ready,
+            pending = character.id in favoriteState.pendingIds,
+            onFavoriteChange = onFavoriteChange
         )
 
         Text(
-            "BBY — до битвы при Явине.\n" +
+            text = "BBY — до битвы при Явине.\n" +
                     "ABY — после битвы при Явине.\n\n" +
                     "Данные: swapi.dev.\n" +
                     "Изображения: Wookieepedia / Fandom, Lucasfilm.",
@@ -548,40 +748,36 @@ private fun InfoCard(
     value: String,
     modifier: Modifier = Modifier.fillMaxWidth()
 ) {
-    Card(modifier) {
+    Card(modifier = modifier) {
         Column(
-            Modifier.padding(16.dp),
+            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                title,
+                text = title,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary
             )
+
             Text(value)
         }
-    }
-}
-
-private fun measurement(value: String, unit: String): String {
-    return if (value.replace(",", "").toDoubleOrNull() != null) {
-        "$value $unit"
-    } else {
-        value
     }
 }
 
 @Composable
 private fun LoadingScreen() {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         CircularProgressIndicator()
+
         Text(
-            "Загрузка…",
-            Modifier.padding(top = 16.dp)
+            text = "Загрузка…",
+            modifier = Modifier.padding(top = 16.dp)
         )
     }
 }
@@ -592,14 +788,17 @@ private fun ErrorScreen(
     onRetry: () -> Unit
 ) {
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(message, textAlign = TextAlign.Center)
+        Text(
+            text = message,
+            textAlign = TextAlign.Center
+        )
 
         Button(
             onClick = onRetry,

@@ -10,14 +10,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.projectandroidstarwars.domain.model.StarWarsCharacter
-import com.example.projectandroidstarwars.viewmodel.FavoritesViewModel
+import com.example.projectandroidstarwars.viewmodel.CharacterUiModel
 import com.example.projectandroidstarwars.viewmodel.LoadState
 
 @Composable
 fun FavoritesScreen(
-    viewModel: FavoritesViewModel,
-    details: @Composable (StarWarsCharacter) -> Unit
+    state: LoadState<List<CharacterUiModel>>,
+    pendingIds: Set<Int>,
+    onRetry: () -> Unit,
+    onRemove: (Int) -> Unit,
+    details: @Composable (CharacterUiModel) -> Unit
 ) {
     var selectedId by rememberSaveable {
         mutableStateOf<Int?>(null)
@@ -29,15 +31,19 @@ fun FavoritesScreen(
 
     Column(Modifier.fillMaxSize()) {
         if (selectedId != null) {
-            TextButton(onClick = { selectedId = null }) {
+            TextButton(
+                onClick = {
+                    selectedId = null
+                }
+            ) {
                 Text("← К избранному")
             }
         }
 
-        when (val state = viewModel.state) {
+        when (state) {
             LoadState.Loading -> {
                 Box(
-                    Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator()
@@ -46,12 +52,12 @@ fun FavoritesScreen(
 
             is LoadState.Error -> {
                 Column(
-                    Modifier.padding(24.dp),
+                    modifier = Modifier.padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(state.message)
 
-                    Button(onClick = viewModel::retry) {
+                    Button(onClick = onRetry) {
                         Text("Повторить")
                     }
                 }
@@ -67,13 +73,15 @@ fun FavoritesScreen(
                         details(selected)
                     } else {
                         Text(
-                            "Персонаж удалён из избранного.",
-                            Modifier.padding(16.dp)
+                            text = "Персонаж удалён из избранного.",
+                            modifier = Modifier.padding(16.dp)
                         )
                     }
                 } else if (state.data.isEmpty()) {
                     Box(
-                        Modifier.fillMaxSize().padding(24.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -91,33 +99,32 @@ fun FavoritesScreen(
                             key = { it.id }
                         ) { character ->
                             Card(
-                                onClick = { selectedId = character.id },
+                                onClick = {
+                                    selectedId = character.id
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
-                                    Modifier.padding(16.dp),
+                                    modifier = Modifier.padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(Modifier.weight(1f)) {
                                         Text(
-                                            character.name,
+                                            text = character.name,
                                             style = MaterialTheme.typography.titleMedium
                                         )
 
                                         Text(
-                                            "Сохранён на устройстве",
+                                            text = "Сохранён на устройстве",
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                     }
 
                                     TextButton(
                                         onClick = {
-                                            viewModel.setFavorite(
-                                                character,
-                                                false
-                                            )
+                                            onRemove(character.id)
                                         },
-                                        enabled = character.id !in viewModel.pendingIds
+                                        enabled = character.id !in pendingIds
                                     ) {
                                         Text("Удалить")
                                     }

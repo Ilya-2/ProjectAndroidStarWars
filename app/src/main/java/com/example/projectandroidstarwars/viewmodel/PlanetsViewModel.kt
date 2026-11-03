@@ -13,10 +13,7 @@ import com.example.projectandroidstarwars.di.PlanetContainer
 import com.example.projectandroidstarwars.domain.planets.GetPlanetUseCase
 import com.example.projectandroidstarwars.domain.planets.GetPlanetsUseCase
 import com.example.projectandroidstarwars.domain.planets.Planet
-import com.example.projectandroidstarwars.domain.planets.PlanetLoadException
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 
 class PlanetsViewModel(
     private val savedStateHandle: SavedStateHandle,
@@ -80,22 +77,15 @@ class PlanetsViewModel(
 
         val query = activeQuery
 
-        listJob = viewModelScope.launch {
-            try {
-                listState = LoadState.Success(
-                    getPlanets(query)
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: PlanetLoadException) {
-                listState = LoadState.Error(
-                    e.message ?: "Не удалось загрузить планеты."
-                )
-            } catch (e: Exception) {
-                listState = LoadState.Error(
-                    "Не удалось обработать список планет."
-                )
+        listJob = viewModelScope.launchWithErrorHandling(
+            defaultMessage = "Не удалось обработать список планет.",
+            onError = { message ->
+                listState = LoadState.Error(message)
             }
+        ) {
+            listState = LoadState.Success(
+                getPlanets(query)
+            )
         }
     }
 
@@ -106,22 +96,15 @@ class PlanetsViewModel(
         savedStateHandle["selected_planet"] = id
         detailsState = LoadState.Loading
 
-        detailsJob = viewModelScope.launch {
-            try {
-                detailsState = LoadState.Success(
-                    getPlanet(id)
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: PlanetLoadException) {
-                detailsState = LoadState.Error(
-                    e.message ?: "Не удалось загрузить планету."
-                )
-            } catch (e: Exception) {
-                detailsState = LoadState.Error(
-                    "Не удалось обработать данные планеты."
-                )
+        detailsJob = viewModelScope.launchWithErrorHandling(
+            defaultMessage = "Не удалось обработать данные планеты.",
+            onError = { message ->
+                detailsState = LoadState.Error(message)
             }
+        ) {
+            detailsState = LoadState.Success(
+                getPlanet(id)
+            )
         }
     }
 
