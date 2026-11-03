@@ -1,6 +1,7 @@
 package com.example.projectandroidstarwars.ui.theme
 
 import android.Manifest
+import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,11 +29,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
+import com.example.projectandroidstarwars.R
+import com.example.projectandroidstarwars.domain.model.LessonTime
+import com.example.projectandroidstarwars.notifications.LessonReminderScheduler
 import com.example.projectandroidstarwars.viewmodel.ProfileViewModel
+import java.util.Calendar
 
 @Composable
 fun ProfileRoute(
@@ -81,6 +91,14 @@ fun ProfileRoute(
             },
             style = MaterialTheme.typography.headlineSmall
         )
+
+        if (state.profile.favoriteLessonTime.isNotBlank()) {
+            Text(
+                text = "Время любимой пары: " +
+                        state.profile.favoriteLessonTime,
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
 
         Button(
             onClick = {
@@ -143,6 +161,11 @@ fun EditProfileRoute(
 ) {
     val state = viewModel.uiState
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    val reminderScheduler = remember(context) {
+        LessonReminderScheduler(context)
+    }
 
     var showPhotoSource by rememberSaveable {
         mutableStateOf(false)
@@ -152,7 +175,59 @@ fun EditProfileRoute(
         mutableStateOf(hasPhotoPermission(context))
     }
 
+    var notificationsGranted by remember {
+        mutableStateOf(reminderScheduler.canPostNotifications())
+    }
+
+    var exactAlarmsGranted by remember {
+        mutableStateOf(reminderScheduler.canScheduleExactAlarms())
+    }
+
+    val timeError = LessonTime.validationError(
+        state.draft.favoriteLessonTime
+    )
+
     BackHandler(enabled = state.busy) {}
+
+    DisposableEffect(lifecycleOwner, reminderScheduler) {
+        fun refreshPermissions() {
+            notificationsGranted =
+                reminderScheduler.canPostNotifications()
+
+            exactAlarmsGranted =
+                reminderScheduler.canScheduleExactAlarms()
+        }
+
+        reminderScheduler.createNotificationChannel()
+        refreshPermissions()
+
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val notificationPermissionLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) {
+            notificationsGranted =
+                reminderScheduler.canPostNotifications()
+
+            if (!notificationsGranted) {
+                viewModel.reportError(
+                    "Уведомления не разрешены. " +
+                            "Их можно включить в настройках уведомлений."
+                )
+            }
+        }
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -290,6 +365,10 @@ fun EditProfileRoute(
             label = {
                 Text("ФИО")
             },
+            supportingText = {
+                Text("Это имя будет указано в напоминании.")
+            },
+            isError = state.draft.fullName.isBlank(),
             singleLine = true,
             enabled = !state.busy,
             modifier = Modifier.fillMaxWidth()
@@ -312,6 +391,124 @@ fun EditProfileRoute(
             modifier = Modifier.fillMaxWidth()
         )
 
+        OutlinedTextField(
+            value = state.draft.favoriteLessonTime,
+            onValueChange = viewModel::updateFavoriteLessonTime,
+            label = {
+                Text("Время любимой пары")
+            },
+            placeholder = {
+                Text("HH:mm")
+            },
+            supportingText = {
+                Text(
+                    text = timeError
+                        ?: "Напоминание на сегодня по времени устройства."
+                )
+            },
+            trailingIcon = {
+                IconButton(
+                    onClick = {
+                        showLessonTimePicker(
+                            context = context,
+                            currentValue = state.draft.favoriteLessonTime,
+                            onSelected = viewModel::updateFavoriteLessonTime
+                        )
+                    },
+                    enabled = !state.busy
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            R.drawable.ic_lesson_notification
+                        ),
+                        contentDescription = "Выбрать время на часах"
+                    )
+                }
+            },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text
+            ),
+            isError = timeError != null,
+            singleLine = true,
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (!notificationsGranted) {
+            Text(
+                text = "Чтобы получить напоминание, разреши уведомления.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            OutlinedButton(
+                onClick = {
+                    val runtimePermissionMissing =
+                        Build.VERSION.SDK_INT >=
+                                Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) != PackageManager.PERMISSION_GRANTED
+
+                    if (runtimePermissionMissing) {
+                        notificationPermissionLauncher.launch(
+                            Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    } else {
+                        openNotificationSettings(
+                            context = context,
+                            onError = viewModel::reportError
+                        )
+                    }
+                },
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Разрешить уведомления")
+            }
+
+            TextButton(
+                onClick = {
+                    openNotificationSettings(
+                        context = context,
+                        onError = viewModel::reportError
+                    )
+                },
+                enabled = !state.busy
+            ) {
+                Text("Настройки уведомлений")
+            }
+        }
+
+        if (!exactAlarmsGranted) {
+            Text(
+                text = "Для напоминания в выбранную минуту " +
+                        "нужен доступ к точным будильникам. " +
+                        "Включи его в настройках и вернись в приложение.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            OutlinedButton(
+                onClick = {
+                    openExactAlarmSettings(
+                        context = context,
+                        onError = viewModel::reportError
+                    )
+                },
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Разрешить точные напоминания")
+            }
+        }
+
+        if (notificationsGranted && exactAlarmsGranted) {
+            Text(
+                text = "Разрешения для напоминания предоставлены.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
         state.error?.let { message ->
             Text(
                 text = message,
@@ -325,9 +522,23 @@ fun EditProfileRoute(
 
         Button(
             onClick = {
-                viewModel.save(onSaved = onBack)
+                viewModel.save(
+                    onSaved = {
+                        Toast.makeText(
+                            context,
+                            "Профиль сохранён. Напоминание установлено.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                        onBack()
+                    }
+                )
             },
-            enabled = !state.busy,
+            enabled = !state.busy &&
+                    state.draft.fullName.isNotBlank() &&
+                    timeError == null &&
+                    notificationsGranted &&
+                    exactAlarmsGranted,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
@@ -437,6 +648,100 @@ private fun ProfileLoading() {
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator()
+    }
+}
+
+private fun showLessonTimePicker(
+    context: Context,
+    currentValue: String,
+    onSelected: (String) -> Unit
+) {
+    val calendar = Calendar.getInstance()
+
+    val validValue = LessonTime.validationError(currentValue) == null
+
+    val initialHour = if (validValue) {
+        currentValue.substring(0, 2).toInt()
+    } else {
+        calendar.get(Calendar.HOUR_OF_DAY)
+    }
+
+    val initialMinute = if (validValue) {
+        currentValue.substring(3, 5).toInt()
+    } else {
+        calendar.get(Calendar.MINUTE)
+    }
+
+    TimePickerDialog(
+        context,
+        android.R.style.Theme_Material_Light_Dialog_Alert,
+        { _, hour, minute ->
+            onSelected(
+                LessonTime.format(hour, minute)
+            )
+        },
+        initialHour,
+        initialMinute,
+        true
+    ).show()
+}
+
+private fun openNotificationSettings(
+    context: Context,
+    onError: (String) -> Unit
+) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        }
+    } else {
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}")
+        )
+    }
+
+    openSettings(
+        context = context,
+        intent = intent,
+        onError = onError
+    )
+}
+
+private fun openExactAlarmSettings(
+    context: Context,
+    onError: (String) -> Unit
+) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+
+    val intent = Intent(
+        Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+        Uri.parse("package:${context.packageName}")
+    )
+
+    openSettings(
+        context = context,
+        intent = intent,
+        onError = onError
+    )
+}
+
+private fun openSettings(
+    context: Context,
+    intent: Intent,
+    onError: (String) -> Unit
+) {
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        onError(
+            "Не удалось открыть настройки. " +
+                    "Открой настройки приложения вручную."
+        )
+    } catch (_: SecurityException) {
+        onError(
+            "Система не разрешила открыть этот экран настроек."
+        )
     }
 }
 
