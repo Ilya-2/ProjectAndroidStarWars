@@ -6,9 +6,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.projectandroidstarwars.domain.model.LessonTime
 import com.example.projectandroidstarwars.domain.model.UserProfile
 import com.example.projectandroidstarwars.domain.repository.ProfileException
 import com.example.projectandroidstarwars.domain.repository.ProfileRepository
+import com.example.projectandroidstarwars.notifications.LessonReminderScheduler
 import java.net.URI
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -24,7 +26,8 @@ data class ProfileUiState(
 
 class ProfileViewModel(
     private val repository: ProfileRepository,
-    private val savedStateHandle: SavedStateHandle
+    private val savedStateHandle: SavedStateHandle,
+    private val reminderScheduler: LessonReminderScheduler
 ) : ViewModel() {
 
     var uiState by mutableStateOf(
@@ -32,7 +35,9 @@ class ProfileViewModel(
             draft = UserProfile(
                 fullName = savedStateHandle["draft_name"] ?: "",
                 avatarUri = savedStateHandle["draft_avatar"] ?: "",
-                resumeUrl = savedStateHandle["draft_resume"] ?: ""
+                resumeUrl = savedStateHandle["draft_resume"] ?: "",
+                favoriteLessonTime =
+                    savedStateHandle["draft_lesson_time"] ?: ""
             )
         )
     )
@@ -90,6 +95,14 @@ class ProfileViewModel(
         )
     }
 
+    fun updateFavoriteLessonTime(value: String) {
+        if (uiState.busy) return
+
+        updateDraft(
+            uiState.draft.copy(favoriteLessonTime = value)
+        )
+    }
+
     fun importAvatar(uri: String) {
         runOperation(
             defaultMessage = "Не удалось сохранить фотографию."
@@ -110,7 +123,6 @@ class ProfileViewModel(
         ) {
             val uri = repository.createCameraUri()
 
-            // URI переживёт пересоздание Activity, пока открыта камера.
             savedStateHandle["pending_camera_uri"] = uri
 
             onReady(uri)
@@ -136,12 +148,42 @@ class ProfileViewModel(
     fun save(
         onSaved: () -> Unit
     ) {
-        if (!uiState.loaded || uiState.busy) return
+        if (!uiState.loaded || uiState.loading || uiState.busy) {
+            return
+        }
 
         val profile = uiState.draft.copy(
             fullName = uiState.draft.fullName.trim(),
             resumeUrl = uiState.draft.resumeUrl.trim()
         )
+
+        if (profile.fullName.isBlank()) {
+            reportError("Укажи имя для напоминания.")
+            return
+        }
+
+        val timeError = LessonTime.validationError(
+            profile.favoriteLessonTime
+        )
+
+        if (timeError != null) {
+            reportError(timeError)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val triggerAtMillis = LessonTime.todayTimestamp(
+            value = profile.favoriteLessonTime,
+            nowMillis = now
+        )
+
+        if (triggerAtMillis == null || triggerAtMillis <= now) {
+            reportError(
+                "Это время сегодня уже прошло. " +
+                        "Выбери время позже текущего."
+            )
+            return
+        }
 
         if (profile.resumeUrl.isNotEmpty()) {
             val uri = try {
@@ -165,10 +207,29 @@ class ProfileViewModel(
         runOperation(
             defaultMessage = "Не удалось сохранить профиль."
         ) {
+            reminderScheduler.checkPermissions()
+
             repository.save(profile)
 
             uiState = uiState.copy(profile = profile)
             updateDraft(profile)
+
+            try {
+                reminderScheduler.schedule(
+                    profile = profile,
+                    triggerAtMillis = triggerAtMillis
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+
+                throw ProfileException(
+                    "Профиль сохранён, но напоминание не установлено. " +
+                            (
+                                    error.message
+                                        ?: "Попробуй сохранить ещё раз."
+                                    )
+                )
+            }
 
             onSaved()
         }
@@ -202,6 +263,8 @@ class ProfileViewModel(
         savedStateHandle["draft_name"] = profile.fullName
         savedStateHandle["draft_avatar"] = profile.avatarUri
         savedStateHandle["draft_resume"] = profile.resumeUrl
+        savedStateHandle["draft_lesson_time"] =
+            profile.favoriteLessonTime
 
         uiState = uiState.copy(
             draft = profile,

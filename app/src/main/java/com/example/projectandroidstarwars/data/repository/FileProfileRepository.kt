@@ -52,7 +52,11 @@ class FileProfileRepository(
                 UserProfile(
                     fullName = json.optString("fullName", ""),
                     avatarUri = json.optString("avatarUri", ""),
-                    resumeUrl = json.optString("resumeUrl", "")
+                    resumeUrl = json.optString("resumeUrl", ""),
+                    favoriteLessonTime = json.optString(
+                        "favoriteLessonTime",
+                        ""
+                    )
                 )
             }
         }
@@ -64,6 +68,10 @@ class FileProfileRepository(
                     .put("fullName", profile.fullName)
                     .put("avatarUri", profile.avatarUri)
                     .put("resumeUrl", profile.resumeUrl)
+                    .put(
+                        "favoriteLessonTime",
+                        profile.favoriteLessonTime
+                    )
 
                 val output = profileFile.startWrite()
 
@@ -122,7 +130,6 @@ class FileProfileRepository(
                 }
             }
 
-            // Проверяем изображение без загрузки всей фотографии в память.
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
@@ -207,7 +214,6 @@ class FileProfileRepository(
             target = file
 
             connection.inputStream.buffered().use { input ->
-                // Проверяем, что сервер вернул PDF, а не HTML-страницу.
                 input.mark(8)
 
                 val signature = ByteArray(5)

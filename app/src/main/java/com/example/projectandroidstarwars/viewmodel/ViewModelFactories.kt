@@ -5,6 +5,7 @@ import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.projectandroidstarwars.di.AppContainer
+import com.example.projectandroidstarwars.notifications.LessonReminderScheduler
 import com.example.projectandroidstarwars.ui.characterImageResource
 
 val charactersViewModelFactory = viewModelFactory {
@@ -66,13 +67,14 @@ val favoritesViewModelFactory = viewModelFactory {
 
 val profileViewModelFactory = viewModelFactory {
     initializer {
-        AppContainer.initialize(
-            checkNotNull(this[APPLICATION_KEY])
-        )
+        val application = checkNotNull(this[APPLICATION_KEY])
+
+        AppContainer.initialize(application)
 
         ProfileViewModel(
             repository = AppContainer.profileRepository,
-            savedStateHandle = createSavedStateHandle()
+            savedStateHandle = createSavedStateHandle(),
+            reminderScheduler = LessonReminderScheduler(application)
         )
     }
 }
